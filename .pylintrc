@@ -1,0 +1,2 @@
+[TYPECHECK]
+ignored-modules=pydantic
