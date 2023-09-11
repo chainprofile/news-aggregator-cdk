@@ -3,6 +3,7 @@
 
 from datetime import datetime, timedelta
 import os
+import json
 
 from aws_lambda_powertools.utilities.data_classes import event_source, EventBridgeEvent
 from aws_lambda_powertools.utilities.typing import LambdaContext
@@ -46,6 +47,8 @@ def lambda_handler(event: EventBridgeEvent, context: LambdaContext):
     # Iterate over the records
     for item in response["Items"]:
         feed_id = item["PK"].split("#")[1]
+        feed_url = item["feed_url"]
+
         last_polled = datetime.strptime(item["last_polled"], "%Y-%m-%d %H:%M:%S")
 
         # Get the update_period and update_frequency values
@@ -67,5 +70,11 @@ def lambda_handler(event: EventBridgeEvent, context: LambdaContext):
 
         # If the next polling time is in the past, add the feed to the SQS queue
         if current_time >= next_polled:
-            queue.send_message(MessageBody=feed_id)
+            message_body = json.dumps(
+                {
+                    "feed_id": feed_id,
+                    "feed_url": feed_url,
+                }
+            )
+            queue.send_message(MessageBody=message_body)
             print(f"Added {feed_id} to SQS queue for fetching feed items")

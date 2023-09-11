@@ -18,10 +18,13 @@ import feedparser
 
 # Initialize DynamoDB client
 dynamodb = boto3.resource("dynamodb")
-TABLE_NAME = os.environ["TABLE_NAME"]
-feed_table = dynamodb.Table(TABLE_NAME)
-
 dynamodb_client = boto3.client("dynamodb")
+sqs = boto3.resource("sqs")
+
+TABLE_NAME = os.environ["TABLE_NAME"]
+QUEUE_URL = os.environ["QUEUE_URL"]
+
+feed_table = dynamodb.Table(TABLE_NAME)
 
 
 class FeedValidationError(Exception):
@@ -172,3 +175,33 @@ def stream_handler(event: DynamoDBStreamEvent, context: LambdaContext):
                 print(exc)
 
     return {"statusCode": 200, "body": json.dumps({"message": "Success"})}
+
+
+def feed_message_handler(event: dict, context: LambdaContext):
+    """Lambda handler to update feed items using SQS messages"""
+
+    # Process each message in the batch
+    for record in event["Records"]:
+        # Parse the JSON message body
+        message_data = json.loads(record["body"])
+        feed_id = message_data["feed_id"]
+        feed_url = message_data["feed_url"]
+
+        # Fetch the feed data
+        feed_data = feedparser.parse(feed_url)
+        if feed_data.bozo:
+            print(f"Failed to fetch feed data for feed {feed_id} with URL {feed_url}")
+            continue
+
+        # Extract necessary metadata from the parsed feed
+        try:
+            store_feed_items(feed_id, feed_data)
+        except Exception as exc:  # pylint: disable=broad-except
+            print(
+                f"A feed with URL {feed_url} already exists or another condition failed!. Error: {exc}"
+            )
+            continue
+
+        # Delete the message from the queue
+        message = sqs.Message(QUEUE_URL, record["receiptHandle"])
+        message.delete()
