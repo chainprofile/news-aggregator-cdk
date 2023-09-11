@@ -1,6 +1,7 @@
 """ Lambda function to fetch feed items """
 # pylint: disable=unused-argument
 
+from datetime import datetime
 import os
 import json
 
@@ -48,6 +49,34 @@ def chunk(items, batch_size):
     """Yield successive batch_size-sized chunks from items."""
     for i in range(0, len(items), batch_size):
         yield items[i : i + batch_size]
+
+
+def update_feed_on_success(feed_id: str, current_time: str):
+    """Reset error_count and last_error_message on successful update, and update last_polled"""
+    dynamodb_client.update_item(
+        TableName=TABLE_NAME,
+        Key={"PK": {"S": f"FEED#{feed_id}"}, "SK": {"S": f"META#{feed_id}"}},
+        UpdateExpression="SET error_count = :zero, last_error_message = :empty_str, last_polled = :current_time",
+        ExpressionAttributeValues={
+            ":zero": {"N": "0"},
+            ":empty_str": {"S": ""},
+            ":current_time": {"S": current_time},
+        },
+    )
+
+
+def update_feed_on_error(feed_id: str, error_message: str, current_time: str):
+    """Increment error_count, set last_error_message, and update last_polled on update error"""
+    dynamodb_client.update_item(
+        TableName=TABLE_NAME,
+        Key={"PK": {"S": f"FEED#{feed_id}"}, "SK": {"S": f"META#{feed_id}"}},
+        UpdateExpression="ADD error_count :one SET last_error_message = :error_msg, last_polled = :current_time",
+        ExpressionAttributeValues={
+            ":one": {"N": "1"},
+            ":error_msg": {"S": error_message},
+            ":current_time": {"S": current_time},
+        },
+    )
 
 
 def store_feed_items(feed_id: str, feed_data: feedparser.FeedParserDict):
@@ -156,12 +185,18 @@ def stream_handler(event: DynamoDBStreamEvent, context: LambdaContext):
                     "body": json.dumps({"message": "Invalid feed URL"}),
                 }
 
+            current_time = datetime.now().isoformat()
+
             # Extract necessary metadata from the parsed feed
             try:
                 store_feed_items(feed_id, feed_data)
+                update_feed_on_success(feed_id, current_time)
             except PydanticValidationError as exc:
+                update_feed_on_error(feed_id, str(exc), current_time)
                 raise FeedValidationError(exc.errors()) from exc
+
             except ClientError as exc:
+                update_feed_on_error(feed_id, str(exc), current_time)
                 if exc.response["Error"]["Code"] == "TransactionCanceledException":
                     # One of the conditions failed (likely the uniqueness check)
                     return {
@@ -193,10 +228,14 @@ def feed_message_handler(event: dict, context: LambdaContext):
             print(f"Failed to fetch feed data for feed {feed_id} with URL {feed_url}")
             continue
 
+        current_time = datetime.now().isoformat()
+
         # Extract necessary metadata from the parsed feed
         try:
             store_feed_items(feed_id, feed_data)
+            update_feed_on_success(feed_id, current_time)
         except Exception as exc:  # pylint: disable=broad-except
+            update_feed_on_error(feed_id, str(exc), current_time)
             print(
                 f"A feed with URL {feed_url} already exists or another condition failed!. Error: {exc}"
             )
