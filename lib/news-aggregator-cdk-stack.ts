@@ -160,7 +160,6 @@ export class NewsAggregatorCdkStack extends cdk.Stack {
     feedTable.grantReadWriteData(feedSchedulerLambda);
 
     feedQueue.grantSendMessages(feedSchedulerLambda);
-    feedQueue.grantConsumeMessages(feedItemFetcherLambda);
 
     feedItemInitLambda.addEventSource(
       new eventsources.DynamoEventSource(feedTable, {
@@ -172,6 +171,14 @@ export class NewsAggregatorCdkStack extends cdk.Stack {
     );
 
     feedTable.grantStreamRead(feedItemInitLambda);
+
+    feedItemFetcherLambda.addEventSource(
+      new eventsources.SqsEventSource(feedQueue, {
+        batchSize: 10
+      })
+    );
+
+    feedQueue.grantConsumeMessages(feedItemFetcherLambda);
 
     // Create a CloudWatch Event Rule to trigger on a schedule
     const feedSchedulerRule = new events.Rule(this, 'FeedSchedulerRule', {
