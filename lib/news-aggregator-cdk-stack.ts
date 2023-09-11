@@ -76,37 +76,8 @@ export class NewsAggregatorCdkStack extends cdk.Stack {
       }
     );
 
-    const webSubSubscriptionLambda = new lambda.Function(
-      this,
-      'WebSubSubscriptionLambda',
-      {
-        description: 'Lambda function to subscribe to web sub feeds',
-        runtime: lambda.Runtime.PYTHON_3_10,
-        handler: 'index.handler',
-        code: lambda.Code.fromAsset(
-          path.join(__dirname, '../lambdas/python/web_sub_subscription'),
-          {
-            bundling: {
-              image: lambda.Runtime.PYTHON_3_10.bundlingImage,
-              command: [
-                'bash',
-                '-c',
-                'pip install -r requirements.txt -t /asset-output && cp -au . /asset-output'
-              ]
-            }
-          }
-        ),
-        architecture: lambda.Architecture.ARM_64,
-        timeout: cdk.Duration.seconds(10),
-        environment: {
-          TABLE_NAME: feedTable.tableName
-        }
-      }
-    );
-
     feedTable.grantReadWriteData(feedManagerLambda);
     feedTable.grantReadWriteData(feedItemCreatorLambda);
-    feedTable.grantReadWriteData(webSubSubscriptionLambda);
 
     feedItemCreatorLambda.addEventSource(
       new eventsources.DynamoEventSource(feedTable, {
@@ -118,17 +89,6 @@ export class NewsAggregatorCdkStack extends cdk.Stack {
     );
 
     feedTable.grantStreamRead(feedItemCreatorLambda);
-
-    webSubSubscriptionLambda.addEventSource(
-      new eventsources.DynamoEventSource(feedTable, {
-        startingPosition: lambda.StartingPosition.TRIM_HORIZON,
-        batchSize: 10,
-        bisectBatchOnError: true,
-        retryAttempts: 10
-      })
-    );
-
-    feedTable.grantStreamRead(webSubSubscriptionLambda);
 
     const feedManagerApi = new apigateway.RestApi(this, 'FeedManagerApi', {
       restApiName: 'Feed Manager API',
