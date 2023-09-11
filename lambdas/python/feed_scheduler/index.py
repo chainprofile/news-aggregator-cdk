@@ -28,7 +28,7 @@ PERIOD_TO_SECONDS = {
 
 # pylint: disable=no-value-for-parameter
 @event_source(data_class=EventBridgeEvent)
-def lambda_handler(event: EventBridgeEvent, context: LambdaContext):
+def handler(event: EventBridgeEvent, context: LambdaContext):
     """Lambda handler for feed_scheduler"""
 
     # Reference to the DynamoDB table
