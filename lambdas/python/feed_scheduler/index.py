@@ -41,15 +41,19 @@ def handler(event: EventBridgeEvent, context: LambdaContext):
     response = table.scan(
         FilterExpression="begins_with(#pk, :pk) AND begins_with(#sk, :sk)",
         ExpressionAttributeNames={"#pk": "PK", "#sk": "SK"},
-        ExpressionAttributeValues={":pk": "FEED#", ":sk": "SCHEDULE#"},
+        ExpressionAttributeValues={":pk": "FEED#", ":sk": "META#"},
     )
+
+    print(f"Found {response} feeds to schedule")
 
     # Iterate over the records
     for item in response["Items"]:
+        print(f"Processing {item}")
+
         feed_id = item["PK"].split("#")[1]
         feed_url = item["feed_url"]
 
-        last_polled = datetime.strptime(item["last_polled"], "%Y-%m-%d %H:%M:%S")
+        last_polled = datetime.strptime(item["last_polled"], "%Y-%m-%dT%H:%M:%S.%f")
 
         # Get the update_period and update_frequency values
         update_period = item.get(
