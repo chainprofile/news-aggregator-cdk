@@ -69,16 +69,41 @@ export class NewsAggregatorCdkStack extends cdk.Stack {
     );
     feedManagerLambda.addEnvironment('POWERTOOLS_SERVICE_NAME', 'FeedManager');
 
+    const feedItemInitLambda = new lambda.Function(this, 'FeedItemInitLambda', {
+      description: 'Lambda function to initialize feed items',
+      runtime: lambda.Runtime.PYTHON_3_10,
+      handler: 'index.stream_handler',
+      code: lambda.Code.fromAsset(
+        path.join(__dirname, '../lambdas/python/feed_item_manager'),
+        {
+          bundling: {
+            image: lambda.Runtime.PYTHON_3_10.bundlingImage,
+            command: [
+              'bash',
+              '-c',
+              'pip install -r requirements.txt -t /asset-output && cp -au . /asset-output'
+            ]
+          }
+        }
+      ),
+      architecture: lambda.Architecture.ARM_64,
+      timeout: cdk.Duration.seconds(10),
+      environment: {
+        TABLE_NAME: feedTable.tableName,
+        QUEUE_URL: feedQueue.queueUrl
+      }
+    });
+
     // Create the FeedItemFetcher Lambda
     const feedItemFetcherLambda = new lambda.Function(
       this,
-      'FeedItemCreatorLambda',
+      'FeedItemFetcherLambda',
       {
-        description: 'Lambda function to create feed items',
+        description: 'Lambda function to fetch feed items',
         runtime: lambda.Runtime.PYTHON_3_10,
-        handler: 'index.stream_handler',
+        handler: 'index.feed_message_handler',
         code: lambda.Code.fromAsset(
-          path.join(__dirname, '../lambdas/python/feed_item_fetcher'),
+          path.join(__dirname, '../lambdas/python/feed_item_manager'),
           {
             bundling: {
               image: lambda.Runtime.PYTHON_3_10.bundlingImage,
@@ -130,13 +155,14 @@ export class NewsAggregatorCdkStack extends cdk.Stack {
     );
 
     feedTable.grantReadWriteData(feedManagerLambda);
+    feedTable.grantReadWriteData(feedItemInitLambda);
     feedTable.grantReadWriteData(feedItemFetcherLambda);
     feedTable.grantReadWriteData(feedSchedulerLambda);
 
     feedQueue.grantSendMessages(feedSchedulerLambda);
     feedQueue.grantConsumeMessages(feedItemFetcherLambda);
 
-    feedItemFetcherLambda.addEventSource(
+    feedItemInitLambda.addEventSource(
       new eventsources.DynamoEventSource(feedTable, {
         startingPosition: lambda.StartingPosition.TRIM_HORIZON,
         batchSize: 10,
@@ -145,11 +171,11 @@ export class NewsAggregatorCdkStack extends cdk.Stack {
       })
     );
 
-    feedTable.grantStreamRead(feedItemFetcherLambda);
+    feedTable.grantStreamRead(feedItemInitLambda);
 
     // Create a CloudWatch Event Rule to trigger on a schedule
     const feedSchedulerRule = new events.Rule(this, 'FeedSchedulerRule', {
-      schedule: events.Schedule.rate(cdk.Duration.minutes(15)),
+      schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
       description: 'Rule to trigger the FeedScheduler Lambda every 15 minutes',
       targets: [new targets.LambdaFunction(feedSchedulerLambda)]
     });
